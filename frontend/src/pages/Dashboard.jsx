@@ -5,6 +5,8 @@ import ComplainantDashboard from "./ComplainantDashboard";
 import OfficerDashboard from "./OfficerDashboard";
 import AdminDashboard from "./AdminDashboard";
 
+import NotificationBell from "../components/NotificationBell";
+
 const Dashboard = () => {
     const { user, logout } = useAuth();
 
@@ -26,9 +28,13 @@ const Dashboard = () => {
                     <span>CampusVoice</span>
                 </div>
 
-                <button className="logout-button" onClick={handleLogout}>
-                    Logout
-                </button>
+                <div className="header-actions">
+                    <NotificationBell />
+
+                    <button className="logout-button" onClick={handleLogout}>
+                        Logout
+                    </button>
+                </div>
             </header>
 
             {/* Render dashboard according to authenticated user role */}
