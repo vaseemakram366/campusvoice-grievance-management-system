@@ -2,6 +2,41 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "../services/api";
 
+// Convert API report responses into arrays before rendering
+const normalizeReportResponse = (response) => {
+    const report =
+        response?.report ??
+        response?.data ??
+        response?.results ??
+        response;
+
+    if (Array.isArray(report)) {
+        return report;
+    }
+
+    if (report && typeof report === "object") {
+        // Handle nested report arrays
+        if (Array.isArray(report.results)) {
+            return report.results;
+        }
+
+        if (Array.isArray(report.data)) {
+            return report.data;
+        }
+
+        // Handle a single report object
+        if (
+            Object.keys(report).some(key =>
+                key !== "success" && key !== "message"
+            )
+        ) {
+            return [report];
+        }
+    }
+
+    return [];
+};
+
 const AdminDashboard = () => {
     const [grievances, setGrievances] = useState([]);
     const [departments, setDepartments] = useState([]);
@@ -45,12 +80,21 @@ const AdminDashboard = () => {
                 apiRequest("/reports/resolution")
             ]);
 
-            setGrievances(grievanceData.grievances || []);
-            setDepartments(departmentData.departments || []);
-            setPendingReport(pendingData.report || pendingData.data || []);
-            setResolutionReport(
-                resolutionData.report || resolutionData.data || []
+            setGrievances(
+                Array.isArray(grievanceData.grievances)
+                    ? grievanceData.grievances
+                    : []
             );
+
+            setDepartments(
+                Array.isArray(departmentData.departments)
+                    ? departmentData.departments
+                    : []
+            );
+
+            // Normalize both report responses
+            setPendingReport(normalizeReportResponse(pendingData));
+            setResolutionReport(normalizeReportResponse(resolutionData));
 
         } catch (error) {
             setError(error.message);
@@ -97,6 +141,7 @@ const AdminDashboard = () => {
             });
 
             setSuccess("Department created successfully.");
+
             await fetchDashboardData();
 
         } catch (error) {
@@ -136,12 +181,16 @@ const AdminDashboard = () => {
         }
     };
 
+    // Format grievance status for display
     const formatStatus = (status) => {
+        if (!status) return "Unknown";
+
         return status
             .replace("-", " ")
             .replace(/\b\w/g, char => char.toUpperCase());
     };
 
+    // Calculate dashboard statistics
     const pendingCount = grievances.filter(
         grievance => !["resolved", "rejected"].includes(grievance.status)
     ).length;
@@ -193,6 +242,7 @@ const AdminDashboard = () => {
             {/* Department and officer management */}
             <section className="admin-management-grid">
 
+                {/* Create department */}
                 <div className="panel">
                     <h2>Create Department</h2>
                     <p className="panel-description">
@@ -216,7 +266,9 @@ const AdminDashboard = () => {
                             required
                         />
 
-                        <label htmlFor="departmentDescription">Description</label>
+                        <label htmlFor="departmentDescription">
+                            Description
+                        </label>
                         <textarea
                             id="departmentDescription"
                             rows="3"
@@ -246,11 +298,14 @@ const AdminDashboard = () => {
                         </small>
 
                         <button type="submit" disabled={creatingDepartment}>
-                            {creatingDepartment ? "Creating..." : "Create Department"}
+                            {creatingDepartment
+                                ? "Creating..."
+                                : "Create Department"}
                         </button>
                     </form>
                 </div>
 
+                {/* Create officer */}
                 <div className="panel">
                     <h2>Create Department Officer</h2>
                     <p className="panel-description">
@@ -324,7 +379,9 @@ const AdminDashboard = () => {
                         </select>
 
                         <button type="submit" disabled={creatingOfficer}>
-                            {creatingOfficer ? "Creating..." : "Create Officer"}
+                            {creatingOfficer
+                                ? "Creating..."
+                                : "Create Officer"}
                         </button>
                     </form>
                 </div>
@@ -335,16 +392,27 @@ const AdminDashboard = () => {
                 <h2>Departments</h2>
 
                 {departments.length === 0 ? (
-                    <p className="empty-state">No departments available.</p>
+                    <p className="empty-state">
+                        No departments available.
+                    </p>
                 ) : (
                     <div className="department-grid">
                         {departments.map(department => (
-                            <div className="department-card" key={department._id}>
+                            <div
+                                className="department-card"
+                                key={department._id}
+                            >
                                 <h3>{department.name}</h3>
-                                <p>{department.description || "No description"}</p>
+
+                                <p>
+                                    {department.description || "No description"}
+                                </p>
 
                                 <div className="category-tags">
-                                    {department.categories.map(category => (
+                                    {(Array.isArray(department.categories)
+                                        ? department.categories
+                                        : []
+                                    ).map(category => (
                                         <span key={category}>{category}</span>
                                     ))}
                                 </div>
@@ -357,6 +425,7 @@ const AdminDashboard = () => {
             {/* All grievances */}
             <section className="panel admin-section">
                 <h2>All Grievances</h2>
+
                 <p className="panel-description">
                     Monitor grievances submitted across campus.
                 </p>
@@ -364,7 +433,9 @@ const AdminDashboard = () => {
                 {loading ? (
                     <p>Loading administrative data...</p>
                 ) : grievances.length === 0 ? (
-                    <p className="empty-state">No grievances found.</p>
+                    <p className="empty-state">
+                        No grievances found.
+                    </p>
                 ) : (
                     <div className="admin-table-wrapper">
                         <table className="admin-table">
@@ -382,9 +453,17 @@ const AdminDashboard = () => {
                                 {grievances.map(grievance => (
                                     <tr key={grievance._id}>
                                         <td>{grievance.title}</td>
-                                        <td>{grievance.complainant?.name || "Unknown"}</td>
-                                        <td>{grievance.department?.name || "Unassigned"}</td>
+
+                                        <td>
+                                            {grievance.complainant?.name || "Unknown"}
+                                        </td>
+
+                                        <td>
+                                            {grievance.department?.name || "Unassigned"}
+                                        </td>
+
                                         <td>{grievance.priority}</td>
+
                                         <td>
                                             <span className={`status-badge ${grievance.status}`}>
                                                 {formatStatus(grievance.status)}
@@ -398,43 +477,74 @@ const AdminDashboard = () => {
                 )}
             </section>
 
-            {/* Reports */}
+            {/* Administrative reports */}
             <section className="admin-management-grid admin-section">
 
+                {/* Pending grievance report */}
                 <div className="panel">
                     <h2>Pending Grievance Report</h2>
+
                     <p className="panel-description">
                         Pending grievances grouped by department.
                     </p>
 
                     {pendingReport.length === 0 ? (
-                        <p className="empty-state">No pending report data available.</p>
+                        <p className="empty-state">
+                            No pending report data available.
+                        </p>
                     ) : (
                         pendingReport.map((item, index) => (
-                            <div className="report-row" key={item._id || index}>
-                                <span>{item.departmentName || item.department}</span>
-                                <strong>{item.pendingCount ?? item.count ?? 0}</strong>
+                            <div
+                                className="report-row"
+                                key={item._id || index}
+                            >
+                                <span>
+                                    {item.departmentName ||
+                                        item.department?.name ||
+                                        item.department ||
+                                        "Department"}
+                                </span>
+
+                                <strong>
+                                    {item.pendingCount ??
+                                        item.count ??
+                                        0}
+                                </strong>
                             </div>
                         ))
                     )}
                 </div>
 
+                {/* Resolution report */}
                 <div className="panel">
                     <h2>Resolution Report</h2>
+
                     <p className="panel-description">
                         Average grievance resolution time.
                     </p>
 
                     {resolutionReport.length === 0 ? (
-                        <p className="empty-state">No resolution report data available.</p>
+                        <p className="empty-state">
+                            No resolution report data available.
+                        </p>
                     ) : (
                         resolutionReport.map((item, index) => (
-                            <div className="report-row" key={item._id || index}>
-                                <span>{item.departmentName || item.department || "Overall"}</span>
+                            <div
+                                className="report-row"
+                                key={item._id || index}
+                            >
+                                <span>
+                                    {item.departmentName ||
+                                        item.department?.name ||
+                                        item.department ||
+                                        "Overall"}
+                                </span>
+
                                 <strong>
                                     {item.averageResolutionHours ??
                                         item.averageResolutionTime ??
                                         item.avgResolutionHours ??
+                                        item.averageResolutionTimeHours ??
                                         "—"} hours
                                 </strong>
                             </div>
