@@ -7,9 +7,29 @@ const OfficerDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [updatingId, setUpdatingId] = useState(null);
-
-    // Store remarks separately for each grievance
     const [remarks, setRemarks] = useState({});
+
+    // Format grievance status safely
+    const formatStatus = (status) => {
+        if (typeof status !== "string" || !status) {
+            return "Unknown";
+        }
+
+        return status
+            .replace(/-/g, " ")
+            .replace(/\b\w/g, char => char.toUpperCase());
+    };
+
+    // Format dates safely
+    const formatDate = (date) => {
+        if (!date) return "Not available";
+
+        const parsedDate = new Date(date);
+
+        return Number.isNaN(parsedDate.getTime())
+            ? "Not available"
+            : parsedDate.toLocaleString();
+    };
 
     // Fetch grievances assigned to the logged-in officer
     const fetchGrievances = async () => {
@@ -17,8 +37,12 @@ const OfficerDashboard = () => {
             setError("");
 
             const data = await apiRequest("/grievances");
-            setGrievances(data.grievances || []);
 
+            setGrievances(
+                Array.isArray(data.grievances)
+                    ? data.grievances
+                    : []
+            );
         } catch (error) {
             setError(error.message);
         } finally {
@@ -50,7 +74,6 @@ const OfficerDashboard = () => {
             }));
 
             await fetchGrievances();
-
         } catch (error) {
             setError(error.message);
         } finally {
@@ -58,14 +81,9 @@ const OfficerDashboard = () => {
         }
     };
 
-    const formatStatus = (status) => {
-        return status
-            .replace("-", " ")
-            .replace(/\b\w/g, char => char.toUpperCase());
-    };
-
     const pendingCount = grievances.filter(
-        grievance => !["resolved", "rejected"].includes(grievance.status)
+        grievance =>
+            !["resolved", "rejected"].includes(grievance.status)
     ).length;
 
     const resolvedCount = grievances.filter(
@@ -102,10 +120,15 @@ const OfficerDashboard = () => {
                 </div>
             </section>
 
-            {error && <div className="error-message">{error}</div>}
+            {error && (
+                <div className="error-message" role="alert">
+                    {error}
+                </div>
+            )}
 
             <section className="panel">
                 <h2>Assigned Grievances</h2>
+
                 <p className="panel-description">
                     Review each issue and update its progress.
                 </p>
@@ -125,6 +148,9 @@ const OfficerDashboard = () => {
                                 "rejected"
                             ].includes(grievance.status);
 
+                            const isUpdating =
+                                updatingId === grievance._id;
+
                             return (
                                 <article
                                     className="officer-grievance-card"
@@ -133,12 +159,17 @@ const OfficerDashboard = () => {
                                     <div className="grievance-item-header">
                                         <div>
                                             <h3>{grievance.title}</h3>
+
                                             <p className="officer-category">
-                                                {grievance.category} · {grievance.department?.name}
+                                                {grievance.category}
+                                                {" · "}
+                                                {grievance.department?.name || "Department unavailable"}
                                             </p>
                                         </div>
 
-                                        <span className={`status-badge ${grievance.status}`}>
+                                        <span
+                                            className={`status-badge ${grievance.status || "unknown"}`}
+                                        >
                                             {formatStatus(grievance.status)}
                                         </span>
                                     </div>
@@ -149,17 +180,17 @@ const OfficerDashboard = () => {
 
                                     <div className="grievance-meta">
                                         <span>
-                                            Complainant: {grievance.complainant?.name || "Unknown"}
+                                            Complainant:{" "}
+                                            {grievance.complainant?.name || "Unknown"}
                                         </span>
 
                                         <span>
-                                            Priority: {grievance.priority}
+                                            Priority: {grievance.priority || "Not specified"}
                                         </span>
 
                                         <span>
-                                            Submitted: {new Date(
-                                                grievance.createdAt
-                                            ).toLocaleDateString()}
+                                            Submitted:{" "}
+                                            {formatDate(grievance.createdAt)}
                                         </span>
                                     </div>
 
@@ -167,23 +198,26 @@ const OfficerDashboard = () => {
                                         <div className="status-history">
                                             <h4>Status History</h4>
 
-                                            {grievance.statusHistory.map((entry, index) => (
-                                                <div key={index} className="history-entry">
-                                                    <strong>
-                                                        {formatStatus(entry.status)}
-                                                    </strong>
+                                            {grievance.statusHistory.map(
+                                                (entry, index) => (
+                                                    <div
+                                                        key={entry._id || index}
+                                                        className="history-entry"
+                                                    >
+                                                        <strong>
+                                                            {formatStatus(entry.status)}
+                                                        </strong>
 
-                                                    {entry.remark && (
-                                                        <p>{entry.remark}</p>
-                                                    )}
+                                                        {entry.remark && (
+                                                            <p>{entry.remark}</p>
+                                                        )}
 
-                                                    <small>
-                                                        {new Date(
-                                                            entry.updatedAt
-                                                        ).toLocaleString()}
-                                                    </small>
-                                                </div>
-                                            ))}
+                                                        <small>
+                                                            {formatDate(entry.updatedAt)}
+                                                        </small>
+                                                    </div>
+                                                )
+                                            )}
                                         </div>
                                     )}
 
@@ -198,19 +232,20 @@ const OfficerDashboard = () => {
                                                 rows="3"
                                                 placeholder="Write an update for the complainant..."
                                                 value={remarks[grievance._id] || ""}
-                                                onChange={(event) =>
+                                                onChange={event =>
                                                     setRemarks(previous => ({
                                                         ...previous,
                                                         [grievance._id]: event.target.value
                                                     }))
                                                 }
+                                                disabled={isUpdating}
                                             />
 
                                             <div className="officer-actions">
                                                 {grievance.status !== "in-progress" && (
                                                     <button
                                                         className="secondary-action"
-                                                        disabled={updatingId === grievance._id}
+                                                        disabled={isUpdating}
                                                         onClick={() =>
                                                             handleStatusUpdate(
                                                                 grievance._id,
@@ -218,13 +253,15 @@ const OfficerDashboard = () => {
                                                             )
                                                         }
                                                     >
-                                                        Start Progress
+                                                        {isUpdating
+                                                            ? "Updating..."
+                                                            : "Start Progress"}
                                                     </button>
                                                 )}
 
                                                 <button
                                                     className="success-action"
-                                                    disabled={updatingId === grievance._id}
+                                                    disabled={isUpdating}
                                                     onClick={() =>
                                                         handleStatusUpdate(
                                                             grievance._id,
@@ -232,14 +269,14 @@ const OfficerDashboard = () => {
                                                         )
                                                     }
                                                 >
-                                                    {updatingId === grievance._id
+                                                    {isUpdating
                                                         ? "Updating..."
                                                         : "Mark Resolved"}
                                                 </button>
 
                                                 <button
                                                     className="danger-action"
-                                                    disabled={updatingId === grievance._id}
+                                                    disabled={isUpdating}
                                                     onClick={() =>
                                                         handleStatusUpdate(
                                                             grievance._id,

@@ -9,7 +9,8 @@ const getPendingReport = async (req, res, next) => {
                 $match: {
                     status: {
                         $nin: ["resolved", "rejected"]
-                    }
+                    },
+                    department: { $ne: null }
                 }
             },
             {
@@ -38,7 +39,8 @@ const getPendingReport = async (req, res, next) => {
             },
             {
                 $sort: {
-                    pendingCount: -1
+                    pendingCount: -1,
+                    department: 1
                 }
             }
         ]);
@@ -83,7 +85,7 @@ const getResolutionReport = async (req, res, next) => {
             },
             {
                 $match: {
-                    resolvedEntry: { $exists: true }
+                    "resolvedEntry.updatedAt": { $type: "date" }
                 }
             },
             {
@@ -98,6 +100,13 @@ const getResolutionReport = async (req, res, next) => {
                             },
                             3600000
                         ]
+                    }
+                }
+            },
+            {
+                $match: {
+                    resolutionTimeHours: {
+                        $gte: 0
                     }
                 }
             },
@@ -133,6 +142,7 @@ const getResolutionReport = async (req, res, next) => {
         next(error);
     }
 };
+
 
 module.exports = {
     getPendingReport,

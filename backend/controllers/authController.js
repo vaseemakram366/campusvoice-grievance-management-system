@@ -39,10 +39,17 @@ const register = async (req, res, next) => {
     try {
         const { name, email, password } = req.body;
 
-        if (!name || !email || !password) {
+        if (
+            typeof name !== "string" ||
+            typeof email !== "string" ||
+            typeof password !== "string" ||
+            !name.trim() ||
+            !email.trim() ||
+            !password
+        ) {
             return res.status(400).json({
                 success: false,
-                message: "Name, email and password are required"
+                message: "Valid name, email and password are required"
             });
         }
 
@@ -53,8 +60,18 @@ const register = async (req, res, next) => {
             });
         }
 
+        const normalizedEmail = email.trim().toLowerCase();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+        if (!emailRegex.test(normalizedEmail)) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide a valid email address"
+            });
+        }
+
         const existingUser = await User.findOne({
-            email: email.toLowerCase().trim()
+            email: normalizedEmail
         });
 
         if (existingUser) {
@@ -68,8 +85,8 @@ const register = async (req, res, next) => {
         const hashedPassword = await bcrypt.hash(password, 12);
 
         const user = await User.create({
-            name,
-            email,
+            name: name.trim(),
+            email: normalizedEmail,
             password: hashedPassword,
             role: "complainant"
         });
@@ -103,16 +120,22 @@ const login = async (req, res, next) => {
     try {
         const { email, password } = req.body;
 
-        if (!email || !password) {
+        if (
+            typeof email !== "string" ||
+            typeof password !== "string" ||
+            !email.trim() ||
+            !password
+        ) {
             return res.status(400).json({
                 success: false,
-                message: "Email and password are required"
+                message: "Valid email and password are required"
             });
         }
 
+        // Explicitly select password because User schema hides it by default
         const user = await User.findOne({
-            email: email.toLowerCase().trim()
-        });
+            email: email.trim().toLowerCase()
+        }).select("+password");
 
         if (!user) {
             return res.status(401).json({
@@ -163,39 +186,58 @@ const refreshAccessToken = async (req, res, next) => {
     try {
         const { refreshToken } = req.body;
 
-        if (!refreshToken) {
+        if (
+            typeof refreshToken !== "string" ||
+            !refreshToken
+        ) {
             return res.status(400).json({
                 success: false,
-                message: "Refresh token is required"
+                message: "Valid refresh token is required"
             });
         }
 
-        // Verify refresh token signature and expiry
         const decoded = jwt.verify(
             refreshToken,
             process.env.JWT_REFRESH_SECRET
         );
 
-        // Find user and retrieve stored token hash
-        const user = await User.findById(decoded.id)
-            .select("+refreshTokenHash");
+        if (!decoded.id) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid refresh token payload"
+            });
+        }
 
-        if (
-            !user ||
-            !user.refreshTokenHash ||
-            user.refreshTokenHash !== hashToken(refreshToken)
-        ) {
+        // Generate replacement tokens
+        const tokens = generateTokens({
+            _id: decoded.id,
+            role: decoded.role
+        });
+
+        const oldTokenHash = hashToken(refreshToken);
+        const newTokenHash = hashToken(tokens.refreshToken);
+
+        // Atomically rotate refresh token
+        const user = await User.findOneAndUpdate(
+            {
+                _id: decoded.id,
+                role: decoded.role,
+                refreshTokenHash: oldTokenHash
+            },
+            {
+                $set: {
+                    refreshTokenHash: newTokenHash
+                }
+            },
+            { new: true }
+        );
+
+        if (!user) {
             return res.status(401).json({
                 success: false,
                 message: "Invalid or revoked refresh token"
             });
         }
-
-        // Rotate tokens and invalidate the previous refresh token
-        const tokens = generateTokens(user);
-
-        user.refreshTokenHash = hashToken(tokens.refreshToken);
-        await user.save();
 
         res.status(200).json({
             success: true,
@@ -204,8 +246,11 @@ const refreshAccessToken = async (req, res, next) => {
         });
 
     } catch (error) {
-        if (error.name === "JsonWebTokenError" ||
-            error.name === "TokenExpiredError") {
+        if (
+            error.name === "JsonWebTokenError" ||
+            error.name === "TokenExpiredError" ||
+            error.name === "CastError"
+        ) {
             return res.status(401).json({
                 success: false,
                 message: "Invalid or expired refresh token"
@@ -222,10 +267,13 @@ const logout = async (req, res, next) => {
     try {
         const { refreshToken } = req.body;
 
-        if (!refreshToken) {
+        if (
+            typeof refreshToken !== "string" ||
+            !refreshToken
+        ) {
             return res.status(400).json({
                 success: false,
-                message: "Refresh token is required"
+                message: "Valid refresh token is required"
             });
         }
 
@@ -234,22 +282,34 @@ const logout = async (req, res, next) => {
             process.env.JWT_REFRESH_SECRET
         );
 
-        const user = await User.findById(decoded.id)
-            .select("+refreshTokenHash");
+        if (!decoded.id) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid refresh token payload"
+            });
+        }
 
-        if (
-            !user ||
-            user.refreshTokenHash !== hashToken(refreshToken)
-        ) {
+        // Atomically revoke the matching refresh token
+        const user = await User.findOneAndUpdate(
+            {
+                _id: decoded.id,
+                role: decoded.role,
+                refreshTokenHash: hashToken(refreshToken)
+            },
+            {
+                $set: {
+                    refreshTokenHash: null
+                }
+            },
+            { new: true }
+        );
+
+        if (!user) {
             return res.status(401).json({
                 success: false,
                 message: "Invalid or revoked refresh token"
             });
         }
-
-        // Remove stored refresh token to revoke the session
-        user.refreshTokenHash = null;
-        await user.save();
 
         res.status(200).json({
             success: true,
@@ -257,8 +317,11 @@ const logout = async (req, res, next) => {
         });
 
     } catch (error) {
-        if (error.name === "JsonWebTokenError" ||
-            error.name === "TokenExpiredError") {
+        if (
+            error.name === "JsonWebTokenError" ||
+            error.name === "TokenExpiredError" ||
+            error.name === "CastError"
+        ) {
             return res.status(401).json({
                 success: false,
                 message: "Invalid or expired refresh token"

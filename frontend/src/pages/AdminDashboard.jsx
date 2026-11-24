@@ -15,7 +15,6 @@ const normalizeReportResponse = (response) => {
     }
 
     if (report && typeof report === "object") {
-        // Handle nested report arrays
         if (Array.isArray(report.results)) {
             return report.results;
         }
@@ -24,10 +23,9 @@ const normalizeReportResponse = (response) => {
             return report.data;
         }
 
-        // Handle a single report object
         if (
-            Object.keys(report).some(key =>
-                key !== "success" && key !== "message"
+            Object.keys(report).some(
+                key => key !== "success" && key !== "message"
             )
         ) {
             return [report];
@@ -63,44 +61,67 @@ const AdminDashboard = () => {
     const [creatingDepartment, setCreatingDepartment] = useState(false);
     const [creatingOfficer, setCreatingOfficer] = useState(false);
 
-    // Fetch administrative dashboard data
+    // Fetch administrative dashboard data independently
     const fetchDashboardData = async () => {
-        try {
-            setError("");
+        const endpoints = [
+            apiRequest("/grievances"),
+            apiRequest("/departments"),
+            apiRequest("/reports/pending"),
+            apiRequest("/reports/resolution")
+        ];
 
-            const [
-                grievanceData,
-                departmentData,
-                pendingData,
-                resolutionData
-            ] = await Promise.all([
-                apiRequest("/grievances"),
-                apiRequest("/departments"),
-                apiRequest("/reports/pending"),
-                apiRequest("/reports/resolution")
-            ]);
+        const results = await Promise.allSettled(endpoints);
+        const errors = [];
 
+        const [
+            grievanceResult,
+            departmentResult,
+            pendingResult,
+            resolutionResult
+        ] = results;
+
+        if (grievanceResult.status === "fulfilled") {
             setGrievances(
-                Array.isArray(grievanceData.grievances)
-                    ? grievanceData.grievances
+                Array.isArray(grievanceResult.value.grievances)
+                    ? grievanceResult.value.grievances
                     : []
             );
-
-            setDepartments(
-                Array.isArray(departmentData.departments)
-                    ? departmentData.departments
-                    : []
-            );
-
-            // Normalize both report responses
-            setPendingReport(normalizeReportResponse(pendingData));
-            setResolutionReport(normalizeReportResponse(resolutionData));
-
-        } catch (error) {
-            setError(error.message);
-        } finally {
-            setLoading(false);
+        } else {
+            setGrievances([]);
+            errors.push("Unable to load grievances.");
         }
+
+        if (departmentResult.status === "fulfilled") {
+            setDepartments(
+                Array.isArray(departmentResult.value.departments)
+                    ? departmentResult.value.departments
+                    : []
+            );
+        } else {
+            setDepartments([]);
+            errors.push("Unable to load departments.");
+        }
+
+        if (pendingResult.status === "fulfilled") {
+            setPendingReport(
+                normalizeReportResponse(pendingResult.value)
+            );
+        } else {
+            setPendingReport([]);
+            errors.push("Unable to load pending report.");
+        }
+
+        if (resolutionResult.status === "fulfilled") {
+            setResolutionReport(
+                normalizeReportResponse(resolutionResult.value)
+            );
+        } else {
+            setResolutionReport([]);
+            errors.push("Unable to load resolution report.");
+        }
+
+        setError(errors.join(" "));
+        setLoading(false);
     };
 
     useEffect(() => {
@@ -111,25 +132,37 @@ const AdminDashboard = () => {
     const handleDepartmentSubmit = async (event) => {
         event.preventDefault();
 
+        if (creatingDepartment) return;
+
         setCreatingDepartment(true);
         setError("");
         setSuccess("");
 
         try {
-            const categories = departmentForm.categories
-                .split(",")
-                .map(category => category.trim())
-                .filter(Boolean);
+            const categories = [
+                ...new Set(
+                    departmentForm.categories
+                        .split(",")
+                        .map(category => category.trim())
+                        .filter(Boolean)
+                )
+            ];
+
+            if (departmentForm.name.trim().length < 2) {
+                throw new Error(
+                    "Department name must contain at least 2 characters."
+                );
+            }
 
             if (categories.length === 0) {
-                throw new Error("Enter at least one category");
+                throw new Error("Enter at least one category.");
             }
 
             await apiRequest("/departments", {
                 method: "POST",
                 body: JSON.stringify({
-                    name: departmentForm.name,
-                    description: departmentForm.description,
+                    name: departmentForm.name.trim(),
+                    description: departmentForm.description.trim(),
                     categories
                 })
             });
@@ -145,7 +178,7 @@ const AdminDashboard = () => {
             await fetchDashboardData();
 
         } catch (error) {
-            setError(error.message);
+            setError(error.message || "Unable to create department.");
         } finally {
             setCreatingDepartment(false);
         }
@@ -155,14 +188,24 @@ const AdminDashboard = () => {
     const handleOfficerSubmit = async (event) => {
         event.preventDefault();
 
+        if (creatingOfficer) return;
+
         setCreatingOfficer(true);
         setError("");
         setSuccess("");
 
         try {
+            if (!officerForm.department) {
+                throw new Error("Please select a department.");
+            }
+
             await apiRequest("/users/officers", {
                 method: "POST",
-                body: JSON.stringify(officerForm)
+                body: JSON.stringify({
+                    ...officerForm,
+                    name: officerForm.name.trim(),
+                    email: officerForm.email.trim().toLowerCase()
+                })
             });
 
             setOfficerForm({
@@ -175,18 +218,20 @@ const AdminDashboard = () => {
             setSuccess("Department officer created successfully.");
 
         } catch (error) {
-            setError(error.message);
+            setError(error.message || "Unable to create officer.");
         } finally {
             setCreatingOfficer(false);
         }
     };
 
-    // Format grievance status for display
+    // Format grievance status safely
     const formatStatus = (status) => {
-        if (!status) return "Unknown";
+        if (typeof status !== "string" || !status) {
+            return "Unknown";
+        }
 
         return status
-            .replace("-", " ")
+            .replace(/-/g, " ")
             .replace(/\b\w/g, char => char.toUpperCase());
     };
 
@@ -236,8 +281,17 @@ const AdminDashboard = () => {
                 </div>
             </section>
 
-            {error && <div className="error-message">{error}</div>}
-            {success && <div className="success-message">{success}</div>}
+            {error && (
+                <div className="error-message" role="alert">
+                    {error}
+                </div>
+            )}
+
+            {success && (
+                <div className="success-message" role="status">
+                    {success}
+                </div>
+            )}
 
             {/* Department and officer management */}
             <section className="admin-management-grid">
@@ -245,6 +299,7 @@ const AdminDashboard = () => {
                 {/* Create department */}
                 <div className="panel">
                     <h2>Create Department</h2>
+
                     <p className="panel-description">
                         Add a department and its grievance categories.
                     </p>
@@ -253,51 +308,71 @@ const AdminDashboard = () => {
                         className="grievance-form"
                         onSubmit={handleDepartmentSubmit}
                     >
-                        <label htmlFor="departmentName">Department Name</label>
+                        <label htmlFor="departmentName">
+                            Department Name
+                        </label>
+
                         <input
                             id="departmentName"
                             type="text"
                             value={departmentForm.name}
-                            onChange={event => setDepartmentForm({
-                                ...departmentForm,
-                                name: event.target.value
-                            })}
+                            onChange={event =>
+                                setDepartmentForm(previous => ({
+                                    ...previous,
+                                    name: event.target.value
+                                }))
+                            }
                             placeholder="e.g. Computer Science"
+                            minLength={2}
+                            maxLength={100}
                             required
+                            disabled={creatingDepartment}
                         />
 
                         <label htmlFor="departmentDescription">
                             Description
                         </label>
+
                         <textarea
                             id="departmentDescription"
                             rows="3"
                             value={departmentForm.description}
-                            onChange={event => setDepartmentForm({
-                                ...departmentForm,
-                                description: event.target.value
-                            })}
+                            onChange={event =>
+                                setDepartmentForm(previous => ({
+                                    ...previous,
+                                    description: event.target.value
+                                }))
+                            }
                             placeholder="Department description"
+                            maxLength={1000}
+                            disabled={creatingDepartment}
                         />
 
                         <label htmlFor="categories">Categories</label>
+
                         <input
                             id="categories"
                             type="text"
                             value={departmentForm.categories}
-                            onChange={event => setDepartmentForm({
-                                ...departmentForm,
-                                categories: event.target.value
-                            })}
+                            onChange={event =>
+                                setDepartmentForm(previous => ({
+                                    ...previous,
+                                    categories: event.target.value
+                                }))
+                            }
                             placeholder="Infrastructure, Academics, Network"
                             required
+                            disabled={creatingDepartment}
                         />
 
                         <small className="form-hint">
                             Separate multiple categories with commas.
                         </small>
 
-                        <button type="submit" disabled={creatingDepartment}>
+                        <button
+                            type="submit"
+                            disabled={creatingDepartment}
+                        >
                             {creatingDepartment
                                 ? "Creating..."
                                 : "Create Department"}
@@ -308,6 +383,7 @@ const AdminDashboard = () => {
                 {/* Create officer */}
                 <div className="panel">
                     <h2>Create Department Officer</h2>
+
                     <p className="panel-description">
                         Create an officer account and assign a department.
                     </p>
@@ -316,55 +392,81 @@ const AdminDashboard = () => {
                         className="grievance-form"
                         onSubmit={handleOfficerSubmit}
                     >
-                        <label htmlFor="officerName">Officer Name</label>
+                        <label htmlFor="officerName">
+                            Officer Name
+                        </label>
+
                         <input
                             id="officerName"
                             type="text"
                             value={officerForm.name}
-                            onChange={event => setOfficerForm({
-                                ...officerForm,
-                                name: event.target.value
-                            })}
+                            onChange={event =>
+                                setOfficerForm(previous => ({
+                                    ...previous,
+                                    name: event.target.value
+                                }))
+                            }
                             placeholder="Enter officer name"
+                            minLength={2}
+                            maxLength={100}
                             required
+                            disabled={creatingOfficer}
                         />
 
-                        <label htmlFor="officerEmail">Email Address</label>
+                        <label htmlFor="officerEmail">
+                            Email Address
+                        </label>
+
                         <input
                             id="officerEmail"
                             type="email"
                             value={officerForm.email}
-                            onChange={event => setOfficerForm({
-                                ...officerForm,
-                                email: event.target.value
-                            })}
+                            onChange={event =>
+                                setOfficerForm(previous => ({
+                                    ...previous,
+                                    email: event.target.value
+                                }))
+                            }
                             placeholder="officer@example.com"
                             required
+                            disabled={creatingOfficer}
                         />
 
-                        <label htmlFor="officerPassword">Password</label>
+                        <label htmlFor="officerPassword">
+                            Password
+                        </label>
+
                         <input
                             id="officerPassword"
                             type="password"
                             minLength={6}
                             value={officerForm.password}
-                            onChange={event => setOfficerForm({
-                                ...officerForm,
-                                password: event.target.value
-                            })}
+                            onChange={event =>
+                                setOfficerForm(previous => ({
+                                    ...previous,
+                                    password: event.target.value
+                                }))
+                            }
                             placeholder="Minimum 6 characters"
                             required
+                            disabled={creatingOfficer}
                         />
 
-                        <label htmlFor="officerDepartment">Department</label>
+                        <label htmlFor="officerDepartment">
+                            Department
+                        </label>
+
                         <select
                             id="officerDepartment"
                             value={officerForm.department}
-                            onChange={event => setOfficerForm({
-                                ...officerForm,
-                                department: event.target.value
-                            })}
+                            onChange={event =>
+                                setOfficerForm(previous => ({
+                                    ...previous,
+                                    department: event.target.value
+                                }))
+                            }
                             required
+                            disabled={creatingOfficer}
                         >
                             <option value="">Select department</option>
 
@@ -378,7 +480,12 @@ const AdminDashboard = () => {
                             ))}
                         </select>
 
-                        <button type="submit" disabled={creatingOfficer}>
+                        <button
+                            type="submit"
+                            disabled={
+                                creatingOfficer || departments.length === 0
+                            }
+                        >
                             {creatingOfficer
                                 ? "Creating..."
                                 : "Create Officer"}
@@ -412,8 +519,10 @@ const AdminDashboard = () => {
                                     {(Array.isArray(department.categories)
                                         ? department.categories
                                         : []
-                                    ).map(category => (
-                                        <span key={category}>{category}</span>
+                                    ).map((category, index) => (
+                                        <span key={`${category}-${index}`}>
+                                            {category}
+                                        </span>
                                     ))}
                                 </div>
                             </div>
@@ -462,10 +571,16 @@ const AdminDashboard = () => {
                                             {grievance.department?.name || "Unassigned"}
                                         </td>
 
-                                        <td>{grievance.priority}</td>
+                                        <td>
+                                            {grievance.priority || "Not specified"}
+                                        </td>
 
                                         <td>
-                                            <span className={`status-badge ${grievance.status}`}>
+                                            <span
+                                                className={`status-badge ${
+                                                    grievance.status || "unknown"
+                                                }`}
+                                            >
                                                 {formatStatus(grievance.status)}
                                             </span>
                                         </td>
@@ -501,7 +616,9 @@ const AdminDashboard = () => {
                                 <span>
                                     {item.departmentName ||
                                         item.department?.name ||
-                                        item.department ||
+                                        (typeof item.department === "string"
+                                            ? item.department
+                                            : null) ||
                                         "Department"}
                                 </span>
 
@@ -536,7 +653,9 @@ const AdminDashboard = () => {
                                 <span>
                                     {item.departmentName ||
                                         item.department?.name ||
-                                        item.department ||
+                                        (typeof item.department === "string"
+                                            ? item.department
+                                            : null) ||
                                         "Overall"}
                                 </span>
 

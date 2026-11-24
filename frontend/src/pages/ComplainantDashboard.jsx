@@ -31,11 +31,20 @@ const ComplainantDashboard = () => {
                 apiRequest("/departments")
             ]);
 
-            setGrievances(grievanceData.grievances || []);
-            setDepartments(departmentData.departments || []);
+            setGrievances(
+                Array.isArray(grievanceData.grievances)
+                    ? grievanceData.grievances
+                    : []
+            );
+
+            setDepartments(
+                Array.isArray(departmentData.departments)
+                    ? departmentData.departments
+                    : []
+            );
 
         } catch (error) {
-            setError(error.message);
+            setError(error.message || "Unable to load dashboard data.");
         } finally {
             setLoading(false);
         }
@@ -47,15 +56,22 @@ const ComplainantDashboard = () => {
 
     // Handle controlled form inputs
     const handleChange = (event) => {
-        setFormData({
-            ...formData,
-            [event.target.name]: event.target.value
-        });
+        const { name, value } = event.target;
+
+        setFormData(previous => ({
+            ...previous,
+            [name]: value
+        }));
+
+        setError("");
+        setSuccess("");
     };
 
     // Submit a new grievance
     const handleSubmit = async (event) => {
         event.preventDefault();
+
+        if (submitting) return;
 
         setSubmitting(true);
         setError("");
@@ -64,10 +80,17 @@ const ComplainantDashboard = () => {
         try {
             await apiRequest("/grievances", {
                 method: "POST",
-                body: JSON.stringify(formData)
+                body: JSON.stringify({
+                    ...formData,
+                    title: formData.title.trim(),
+                    description: formData.description.trim(),
+                    category: formData.category.trim()
+                })
             });
 
-            setSuccess("Your grievance has been submitted successfully.");
+            setSuccess(
+                "Your grievance has been submitted successfully."
+            );
 
             setFormData({
                 title: "",
@@ -79,18 +102,40 @@ const ComplainantDashboard = () => {
             await fetchDashboardData();
 
         } catch (error) {
-            setError(error.message);
+            setError(error.message || "Unable to submit grievance.");
         } finally {
             setSubmitting(false);
         }
     };
 
-    // Format status labels for display
+    // Format status labels safely
     const formatStatus = (status) => {
+        if (typeof status !== "string" || !status) {
+            return "Unknown";
+        }
+
         return status
-            .replace("-", " ")
+            .replace(/-/g, " ")
             .replace(/\b\w/g, char => char.toUpperCase());
     };
+
+    // Format dates safely
+    const formatDate = (date) => {
+        if (!date) return "Not available";
+
+        const parsedDate = new Date(date);
+
+        return Number.isNaN(parsedDate.getTime())
+            ? "Not available"
+            : parsedDate.toLocaleDateString();
+    };
+
+    // Safely prepare department categories
+    const categories = departments.flatMap(department =>
+        Array.isArray(department.categories)
+            ? department.categories
+            : []
+    );
 
     return (
         <div className="complainant-dashboard">
@@ -98,8 +143,14 @@ const ComplainantDashboard = () => {
             <section className="welcome-section">
                 <div>
                     <p className="dashboard-label">STUDENT PORTAL</p>
-                    <h1>Welcome, {user.name}</h1>
-                    <p>Submit grievances and keep track of their progress.</p>
+
+                    <h1>
+                        Welcome, {user?.name || "Student"}
+                    </h1>
+
+                    <p>
+                        Submit grievances and keep track of their progress.
+                    </p>
                 </div>
 
                 <div className="user-role">
@@ -116,8 +167,10 @@ const ComplainantDashboard = () => {
                 <div className="stat-card">
                     <span>Pending</span>
                     <h2>
-                        {grievances.filter(g =>
-                            !["resolved", "rejected"].includes(g.status)
+                        {grievances.filter(grievance =>
+                            !["resolved", "rejected"].includes(
+                                grievance.status
+                            )
                         ).length}
                     </h2>
                 </div>
@@ -125,28 +178,44 @@ const ComplainantDashboard = () => {
                 <div className="stat-card">
                     <span>Resolved</span>
                     <h2>
-                        {grievances.filter(g =>
-                            g.status === "resolved"
+                        {grievances.filter(
+                            grievance => grievance.status === "resolved"
                         ).length}
                     </h2>
                 </div>
             </section>
 
-            {error && <div className="error-message">{error}</div>}
-            {success && <div className="success-message">{success}</div>}
+            {error && (
+                <div className="error-message" role="alert">
+                    {error}
+                </div>
+            )}
+
+            {success && (
+                <div className="success-message" role="status">
+                    {success}
+                </div>
+            )}
 
             <section className="dashboard-grid">
 
                 {/* Grievance submission form */}
                 <div className="panel">
                     <h2>Submit a Grievance</h2>
+
                     <p className="panel-description">
                         Describe your issue so the concerned department can address it.
                     </p>
 
-                    <form onSubmit={handleSubmit} className="grievance-form">
+                    <form
+                        onSubmit={handleSubmit}
+                        className="grievance-form"
+                    >
 
-                        <label htmlFor="title">Grievance Title</label>
+                        <label htmlFor="title">
+                            Grievance Title
+                        </label>
+
                         <input
                             id="title"
                             type="text"
@@ -154,10 +223,16 @@ const ComplainantDashboard = () => {
                             placeholder="Enter grievance title"
                             value={formData.title}
                             onChange={handleChange}
+                            minLength={5}
+                            maxLength={150}
                             required
+                            disabled={submitting}
                         />
 
-                        <label htmlFor="description">Description</label>
+                        <label htmlFor="description">
+                            Description
+                        </label>
+
                         <textarea
                             id="description"
                             name="description"
@@ -165,34 +240,48 @@ const ComplainantDashboard = () => {
                             rows="5"
                             value={formData.description}
                             onChange={handleChange}
+                            minLength={10}
+                            maxLength={5000}
                             required
+                            disabled={submitting}
                         />
 
-                        <label htmlFor="category">Category</label>
+                        <label htmlFor="category">
+                            Category
+                        </label>
+
                         <select
                             id="category"
                             name="category"
                             value={formData.category}
                             onChange={handleChange}
                             required
+                            disabled={submitting}
                         >
-                            <option value="">Select category</option>
+                            <option value="">
+                                Select category
+                            </option>
 
-                            {departments.flatMap(department =>
-                                department.categories.map(category => (
-                                    <option key={category} value={category}>
-                                        {category}
-                                    </option>
-                                ))
-                            )}
+                            {categories.map((category, index) => (
+                                <option
+                                    key={`${category}-${index}`}
+                                    value={category}
+                                >
+                                    {category}
+                                </option>
+                            ))}
                         </select>
 
-                        <label htmlFor="priority">Priority</label>
+                        <label htmlFor="priority">
+                            Priority
+                        </label>
+
                         <select
                             id="priority"
                             name="priority"
                             value={formData.priority}
                             onChange={handleChange}
+                            disabled={submitting}
                         >
                             <option value="low">Low</option>
                             <option value="medium">Medium</option>
@@ -200,15 +289,28 @@ const ComplainantDashboard = () => {
                             <option value="urgent">Urgent</option>
                         </select>
 
-                        <button type="submit" disabled={submitting}>
-                            {submitting ? "Submitting..." : "Submit Grievance"}
+                        <button
+                            type="submit"
+                            disabled={submitting || categories.length === 0}
+                        >
+                            {submitting
+                                ? "Submitting..."
+                                : "Submit Grievance"}
                         </button>
+
+                        {categories.length === 0 && (
+                            <p className="panel-description">
+                                No grievance categories are currently available.
+                            </p>
+                        )}
+
                     </form>
                 </div>
 
                 {/* Grievance history */}
                 <div className="panel">
                     <h2>My Grievances</h2>
+
                     <p className="panel-description">
                         Track the current status of your submitted issues.
                     </p>
@@ -218,7 +320,9 @@ const ComplainantDashboard = () => {
                     ) : grievances.length === 0 ? (
                         <div className="empty-state">
                             <h3>No grievances yet</h3>
-                            <p>Your submitted grievances will appear here.</p>
+                            <p>
+                                Your submitted grievances will appear here.
+                            </p>
                         </div>
                     ) : (
                         <div className="grievance-list">
@@ -230,7 +334,11 @@ const ComplainantDashboard = () => {
                                     <div className="grievance-item-header">
                                         <h3>{grievance.title}</h3>
 
-                                        <span className={`status-badge ${grievance.status}`}>
+                                        <span
+                                            className={`status-badge ${
+                                                grievance.status || "unknown"
+                                            }`}
+                                        >
                                             {formatStatus(grievance.status)}
                                         </span>
                                     </div>
@@ -239,23 +347,24 @@ const ComplainantDashboard = () => {
 
                                     <div className="grievance-meta">
                                         <span>
-                                            Category: {grievance.category}
+                                            Category: {grievance.category || "Not specified"}
                                         </span>
+
                                         <span>
-                                            Priority: {grievance.priority}
+                                            Priority: {grievance.priority || "Not specified"}
                                         </span>
+
                                         <span>
                                             Department: {grievance.department?.name || "Unassigned"}
                                         </span>
+
                                         <span>
                                             Officer: {grievance.assignedOfficer?.name || "Awaiting assignment"}
                                         </span>
                                     </div>
 
                                     <small>
-                                        Submitted: {new Date(
-                                            grievance.createdAt
-                                        ).toLocaleDateString()}
+                                        Submitted: {formatDate(grievance.createdAt)}
                                     </small>
                                 </article>
                             ))}

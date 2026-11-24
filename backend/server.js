@@ -17,13 +17,35 @@ const app = express();
 // Create HTTP server for Express and Socket.IO
 const httpServer = http.createServer(app);
 
-// Initialize Socket.IO
-initializeSocket(httpServer);
+// Configure allowed frontend origins
+const allowedOrigins = (
+    process.env.FRONTEND_URL || "http://localhost:5173"
+)
+    .split(",")
+    .map(origin => origin.trim())
+    .filter(Boolean);
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow requests without an Origin header (e.g. Postman)
+        if (!origin || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    optionsSuccessStatus: 204
+};
 
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Initialize Socket.IO
+initializeSocket(httpServer);
 
 // Test route
 app.get("/", (req, res) => {
@@ -52,12 +74,22 @@ app.use((req, res) => {
 // Centralized error handling middleware
 app.use(errorHandler);
 
-// Connect to MongoDB
-connectDB();
+// Start server only after MongoDB connection succeeds
+const startServer = async () => {
+    try {
+        await connectDB();
 
-// Start HTTP server
-const PORT = process.env.PORT || 5000;
+        const PORT = process.env.PORT || 5000;
 
-httpServer.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+        httpServer.listen(PORT, () => {
+            console.log(`CampusVoice server running on port ${PORT}`);
+            console.log("Allowed frontend origins:", allowedOrigins);
+        });
+
+    } catch (error) {
+        console.error("Server startup failed:", error.message);
+        process.exit(1);
+    }
+};
+
+startServer();

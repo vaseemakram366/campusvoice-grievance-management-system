@@ -18,6 +18,29 @@ const Dashboard = () => {
         }
     };
 
+    // Handle missing or invalid user information
+    if (!user || !["complainant", "officer", "admin"].includes(user.role)) {
+        return (
+            <main className="dashboard-page">
+                <header className="dashboard-header">
+                    <div className="brand">
+                        <span className="brand-icon">CV</span>
+                        <span>CampusVoice</span>
+                    </div>
+
+                    <button
+                        className="logout-button"
+                        onClick={handleLogout}
+                    >
+                        Logout
+                    </button>
+                </header>
+
+                <p>Invalid user role. Please log in again.</p>
+            </main>
+        );
+    }
+
     return (
         <main className="dashboard-page">
 
@@ -31,7 +54,10 @@ const Dashboard = () => {
                 <div className="header-actions">
                     <NotificationBell />
 
-                    <button className="logout-button" onClick={handleLogout}>
+                    <button
+                        className="logout-button"
+                        onClick={handleLogout}
+                    >
                         Logout
                     </button>
                 </div>

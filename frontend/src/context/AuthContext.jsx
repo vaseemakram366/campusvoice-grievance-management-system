@@ -1,19 +1,82 @@
 
-import { createContext, useContext, useState } from "react";
+import {
+    createContext,
+    useContext,
+    useEffect,
+    useState
+} from "react";
+
 import { apiRequest } from "../services/api";
 
 const AuthContext = createContext(null);
 
-// Provide authentication state to the application
-export const AuthProvider = ({ children }) => {
-    const [user, setUser] = useState(() => {
+// Safely retrieve saved user information
+const getSavedUser = () => {
+    try {
         const savedUser = localStorage.getItem("user");
         return savedUser ? JSON.parse(savedUser) : null;
-    });
+    } catch {
+        localStorage.removeItem("user");
+        return null;
+    }
+};
+
+// Provide authentication state to the application
+export const AuthProvider = ({ children }) => {
+    const [user, setUser] = useState(getSavedUser);
 
     const [accessToken, setAccessToken] = useState(
         () => localStorage.getItem("accessToken")
     );
+
+    // Synchronize authentication state across token refreshes and tabs
+    useEffect(() => {
+        const handleTokenRefresh = () => {
+            setAccessToken(localStorage.getItem("accessToken"));
+        };
+
+        const handleSessionClear = () => {
+            setUser(null);
+            setAccessToken(null);
+            localStorage.removeItem("user");
+        };
+
+        const handleStorageChange = (event) => {
+            if (event.key === "accessToken") {
+                setAccessToken(event.newValue);
+            }
+
+            if (event.key === "user") {
+                setUser(getSavedUser());
+            }
+        };
+
+        window.addEventListener(
+            "campusvoice:token-refreshed",
+            handleTokenRefresh
+        );
+
+        window.addEventListener(
+            "campusvoice:session-cleared",
+            handleSessionClear
+        );
+
+        window.addEventListener("storage", handleStorageChange);
+
+        return () => {
+            window.removeEventListener(
+                "campusvoice:token-refreshed",
+                handleTokenRefresh
+            );
+
+            window.removeEventListener(
+                "campusvoice:session-cleared",
+                handleSessionClear
+            );
+
+            window.removeEventListener("storage", handleStorageChange);
+        };
+    }, []);
 
     // Save user session after successful authentication
     const saveSession = (data) => {
@@ -65,6 +128,10 @@ export const AuthProvider = ({ children }) => {
 
             setUser(null);
             setAccessToken(null);
+
+            window.dispatchEvent(
+                new Event("campusvoice:session-cleared")
+            );
         }
     };
 

@@ -1,5 +1,6 @@
 
 const Notification = require("../models/Notification");
+const mongoose = require("mongoose");
 
 // Get all notifications of logged-in user
 const getNotifications = async (req, res, next) => {
@@ -47,10 +48,30 @@ const getUnreadNotifications = async (req, res, next) => {
 // Mark a notification as read
 const markNotificationAsRead = async (req, res, next) => {
     try {
-        const notification = await Notification.findOne({
-            _id: req.params.id,
-            recipient: req.user.id
-        });
+        const { id } = req.params;
+
+        // Validate notification ID
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid notification ID"
+            });
+        }
+
+        // Update only the logged-in user's notification
+        const notification = await Notification.findOneAndUpdate(
+            {
+                _id: id,
+                recipient: req.user.id
+            },
+            {
+                $set: { isRead: true }
+            },
+            {
+                new: true,
+                runValidators: true
+            }
+        ).populate("grievance", "title status");
 
         if (!notification) {
             return res.status(404).json({
@@ -58,9 +79,6 @@ const markNotificationAsRead = async (req, res, next) => {
                 message: "Notification not found"
             });
         }
-
-        notification.isRead = true;
-        await notification.save();
 
         res.status(200).json({
             success: true,

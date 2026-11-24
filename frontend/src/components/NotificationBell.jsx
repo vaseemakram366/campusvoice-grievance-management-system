@@ -16,43 +16,88 @@ const NotificationBell = () => {
 
     // Fetch existing notifications and connect to Socket.IO
     useEffect(() => {
-        if (!accessToken) return;
+        if (!accessToken) {
+            setNotifications([]);
+            setError("");
+            setIsOpen(false);
+            return;
+        }
 
-        let socket;
+        let isMounted = true;
 
         const initializeNotifications = async () => {
             try {
                 const data = await apiRequest("/notifications");
 
-                setNotifications(data.notifications || []);
+                if (isMounted) {
+                    // Merge existing notifications without losing
+                    // notifications received through Socket.IO
+                    setNotifications(previous => {
+                        const merged = new Map();
+
+                        (data.notifications || []).forEach(notification => {
+                            merged.set(notification._id, notification);
+                        });
+
+                        previous.forEach(notification => {
+                            merged.set(notification._id, {
+                                ...merged.get(notification._id),
+                                ...notification
+                            });
+                        });
+
+                        return Array.from(merged.values()).sort(
+                            (a, b) =>
+                                new Date(b.createdAt) -
+                                new Date(a.createdAt)
+                        );
+                    });
+
+                    setError("");
+                }
             } catch (error) {
-                setError(error.message);
+                if (isMounted) {
+                    setError(error.message);
+                }
             }
         };
 
         initializeNotifications();
 
         // Establish authenticated Socket.IO connection
-        socket = io(SOCKET_URL, {
+        const socket = io(SOCKET_URL, {
             auth: {
                 token: accessToken
             }
         });
 
         // Listen for new real-time notifications
-        socket.on("newNotification", (notification) => {
-            setNotifications(previous => [
-                notification,
-                ...previous
-            ]);
+        socket.on("newNotification", notification => {
+            if (!isMounted) return;
+
+            setNotifications(previous => {
+                const alreadyExists = previous.some(
+                    item => item._id === notification._id
+                );
+
+                if (alreadyExists) {
+                    return previous;
+                }
+
+                return [notification, ...previous];
+            });
         });
 
-        socket.on("connect_error", (error) => {
-            console.error("Notification connection failed:", error.message);
+        socket.on("connect_error", error => {
+            console.error(
+                "Notification connection failed:",
+                error.message
+            );
         });
 
         return () => {
-            socket?.disconnect();
+            isMounted = false;
+            socket.disconnect();
         };
     }, [accessToken]);
 
@@ -70,6 +115,8 @@ const NotificationBell = () => {
                         : notification
                 )
             );
+
+            setError("");
         } catch (error) {
             setError(error.message);
         }
@@ -83,9 +130,11 @@ const NotificationBell = () => {
         <div className="notification-container">
 
             <button
+                type="button"
                 className="notification-button"
                 onClick={() => setIsOpen(previous => !previous)}
                 aria-label="Toggle notifications"
+                aria-expanded={isOpen}
             >
                 <span className="notification-icon">♢</span>
 
@@ -117,7 +166,9 @@ const NotificationBell = () => {
                                 <article
                                     key={notification._id}
                                     className={`notification-item ${
-                                        notification.isRead ? "read" : "unread"
+                                        notification.isRead
+                                            ? "read"
+                                            : "unread"
                                     }`}
                                 >
                                     <p>{notification.message}</p>
@@ -130,6 +181,7 @@ const NotificationBell = () => {
 
                                     {!notification.isRead && (
                                         <button
+                                            type="button"
                                             className="mark-read-button"
                                             onClick={() =>
                                                 markAsRead(notification._id)
