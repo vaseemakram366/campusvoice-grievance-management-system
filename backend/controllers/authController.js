@@ -2,11 +2,12 @@
 const User = require("../models/User");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
-// Generate JWT tokens
+// Generate access and refresh tokens
 const generateTokens = (user) => {
     const payload = {
-        id: user._id,
+        id: user._id.toString(),
         role: user.role
     };
 
@@ -25,7 +26,15 @@ const generateTokens = (user) => {
     return { accessToken, refreshToken };
 };
 
-// Register user
+// Hash refresh token before storing it in database
+const hashToken = (token) => {
+    return crypto
+        .createHash("sha256")
+        .update(token)
+        .digest("hex");
+};
+
+// Register a new complainant
 const register = async (req, res, next) => {
     try {
         const { name, email, password } = req.body;
@@ -55,6 +64,7 @@ const register = async (req, res, next) => {
             });
         }
 
+        // Hash password before saving
         const hashedPassword = await bcrypt.hash(password, 12);
 
         const user = await User.create({
@@ -64,9 +74,13 @@ const register = async (req, res, next) => {
             role: "complainant"
         });
 
+        // Generate tokens and store hashed refresh token
         const tokens = generateTokens(user);
 
-        return res.status(201).json({
+        user.refreshTokenHash = hashToken(tokens.refreshToken);
+        await user.save();
+
+        res.status(201).json({
             success: true,
             message: "Registration successful",
             user: {
@@ -77,12 +91,14 @@ const register = async (req, res, next) => {
             },
             ...tokens
         });
+
     } catch (error) {
         next(error);
     }
 };
 
-// Login user
+
+// Login existing user
 const login = async (req, res, next) => {
     try {
         const { email, password } = req.body;
@@ -105,6 +121,7 @@ const login = async (req, res, next) => {
             });
         }
 
+        // Compare password with stored hash
         const isPasswordValid = await bcrypt.compare(
             password,
             user.password
@@ -117,9 +134,13 @@ const login = async (req, res, next) => {
             });
         }
 
+        // Generate new tokens on successful login
         const tokens = generateTokens(user);
 
-        return res.status(200).json({
+        user.refreshTokenHash = hashToken(tokens.refreshToken);
+        await user.save();
+
+        res.status(200).json({
             success: true,
             message: "Login successful",
             user: {
@@ -130,12 +151,128 @@ const login = async (req, res, next) => {
             },
             ...tokens
         });
+
     } catch (error) {
         next(error);
     }
 };
 
+
+// Generate new access and refresh tokens
+const refreshAccessToken = async (req, res, next) => {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(400).json({
+                success: false,
+                message: "Refresh token is required"
+            });
+        }
+
+        // Verify refresh token signature and expiry
+        const decoded = jwt.verify(
+            refreshToken,
+            process.env.JWT_REFRESH_SECRET
+        );
+
+        // Find user and retrieve stored token hash
+        const user = await User.findById(decoded.id)
+            .select("+refreshTokenHash");
+
+        if (
+            !user ||
+            !user.refreshTokenHash ||
+            user.refreshTokenHash !== hashToken(refreshToken)
+        ) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid or revoked refresh token"
+            });
+        }
+
+        // Rotate tokens and invalidate the previous refresh token
+        const tokens = generateTokens(user);
+
+        user.refreshTokenHash = hashToken(tokens.refreshToken);
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Access token refreshed successfully",
+            ...tokens
+        });
+
+    } catch (error) {
+        if (error.name === "JsonWebTokenError" ||
+            error.name === "TokenExpiredError") {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid or expired refresh token"
+            });
+        }
+
+        next(error);
+    }
+};
+
+
+// Logout and revoke refresh token
+const logout = async (req, res, next) => {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(400).json({
+                success: false,
+                message: "Refresh token is required"
+            });
+        }
+
+        const decoded = jwt.verify(
+            refreshToken,
+            process.env.JWT_REFRESH_SECRET
+        );
+
+        const user = await User.findById(decoded.id)
+            .select("+refreshTokenHash");
+
+        if (
+            !user ||
+            user.refreshTokenHash !== hashToken(refreshToken)
+        ) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid or revoked refresh token"
+            });
+        }
+
+        // Remove stored refresh token to revoke the session
+        user.refreshTokenHash = null;
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Logged out successfully"
+        });
+
+    } catch (error) {
+        if (error.name === "JsonWebTokenError" ||
+            error.name === "TokenExpiredError") {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid or expired refresh token"
+            });
+        }
+
+        next(error);
+    }
+};
+
+
 module.exports = {
     register,
-    login
+    login,
+    refreshAccessToken,
+    logout
 };

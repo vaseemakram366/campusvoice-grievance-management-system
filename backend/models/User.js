@@ -33,6 +33,13 @@ const userSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "Department",
             default: null
+        },
+
+        // Store hashed refresh token for secure token rotation
+        refreshTokenHash: {
+            type: String,
+            default: null,
+            select: false
         }
     },
     {
